@@ -64,25 +64,30 @@ jobs:
           grep -A3 "dependencies {" app/build.gradle
 
       # —— 第五步：阿里云镜像，加速 AGP 插件与 support 库下载 ——
-      - name: Configure Gradle Aliyun Mirror
+      - name: Configure Gradle Aliyun Mirror (public first)
         run: |
           mkdir -p ~/.gradle
           cat > ~/.gradle/init.gradle <<'EOF'
           allprojects {
               buildscript {
                   repositories {
-                      maven { url 'https://maven.aliyun.com/repository/google' }
+                      mavenLocal()
                       maven { url 'https://maven.aliyun.com/repository/public' }
+                      maven { url 'https://maven.aliyun.com/repository/google' }
                       maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+                      maven { url 'https://maven.aliyun.com/repository/jcenter' }
+                      mavenCentral()
                       google()
                       jcenter()
                   }
               }
               repositories {
+                  mavenLocal()
                   maven { url 'https://maven.aliyun.com/repository/public' }
                   maven { url 'https://maven.aliyun.com/repository/google' }
-                  maven { url 'https://maven.aliyun.com/repository/jcenter' }
                   maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+                  maven { url 'https://maven.aliyun.com/repository/jcenter' }
+                  mavenCentral()
                   google()
                   jcenter()
               }
@@ -90,6 +95,7 @@ jobs:
           EOF
           echo "=== init.gradle ==="
           cat ~/.gradle/init.gradle
+
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./project/android/demo/gradlew
