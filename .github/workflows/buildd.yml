@@ -10,82 +10,97 @@ jobs:
 
     env:
       ANDROID_NDK_VERSION: "25.2.9519653"
+      ANDROID_HOME: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout MNN source code
         uses: actions/checkout@v4
 
-      # —— 制 JDK 11 ——
-      # 先用 JDK17 让 setup-android 的 sdkmanager(16.0) 能跑，再切回 11 给 Gradle
+      # —— 第一步：JDK 17，仅为让 setup-android 的 sdkmanager(16.0) 能运行 ——
       - name: Set up JDK 17 (for sdkmanager)
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # —— 安装 NDK 与 CMake ——
-      - name: Setup Android SDK and NDK
+      # 安装 NDK + CMake + compileSdk 28 所需的 platform/build-tools
+      - name: Setup Android SDK / NDK / CMake
         uses: android-actions/setup-android@v3
         with:
-          packages: 'ndk;${{ env.ANDROID_NDK_VERSION }} cmake;3.22.1'
+          packages: 'ndk;${{ env.ANDROID_NDK_VERSION }} cmake;3.22.1 platforms;android-28 build-tools;28.0.3'
 
-      - name: Set NDK Environment Variables
+      - name: Set NDK environment variables
         run: |
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_ENV
-          echo "ANDROID_NDK=$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_ENV
+          echo "ANDROID_NDK=${ANDROID_HOME}/ndk/${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_ENV
 
-      # —— local.properties 配置 sdk.dir / ndk.dir ——
-      - name: Generate local.properties
-        run: |
-          cat > project/android/demo/local.properties <<EOF
-          sdk.dir=${ANDROID_HOME}
-          ndk.dir=${ANDROID_HOME}/ndk/${{ env.ANDROID_NDK_VERSION }}
-          EOF
-          echo "=== local.properties ==="
-          cat project/android/demo/local.properties
-
-
-      # —— 切回 JDK 11 给 MNN 旧 Gradle 用 ——
+      # —— 第二步：切回 JDK 11，给 MNN 的 Gradle 5.1.1 / AGP 3.4.0 使用 ——
       - name: Set up JDK 11 (for Gradle build)
         uses: actions/setup-java@v4
         with:
           java-version: '11'
           distribution: 'temurin'
 
-      # —— org.junit 不存在 → 注入 junit:4.12 ——
+      - name: Show Java version
+        run: java -version
+
+      # —— 第三步：用绝对路径字面量写 local.properties，杜绝变量未展开问题 ——
+      - name: Generate local.properties
+        run: |
+          printf 'sdk.dir=%s\nndk.dir=%s/ndk/%s\n' \
+            "${ANDROID_HOME}" "${ANDROID_HOME}" "${{ env.ANDROID_NDK_VERSION }}" \
+            > project/android/demo/local.properties
+          echo "=== local.properties ==="
+          cat project/android/demo/local.properties
+
+      # —— 第四步：注入 junit:4.12，修复 ExampleUnitTest 编译报 org.junit 不存在 ——
       - name: Inject junit dependency
         run: |
           cd project/android/demo
-          # 在 dependencies 块里追加 testImplementation junit:4.12
-          sed -i "/dependencies {/a\\    testImplementation 'junit:junit:4.12'" app/build.gradle
+          if ! grep -q "junit:junit" app/build.gradle; then
+            sed -i "/dependencies {/a\\    testImplementation 'junit:junit:4.12'" app/build.gradle
+          fi
           echo "=== patched dependencies ==="
-          grep -A2 "dependencies {" app/build.gradle
+          grep -A3 "dependencies {" app/build.gradle
 
-      # —— 阿里云镜像，避免国外 Maven 拉取失败 ——
+      # —— 第五步：阿里云镜像，加速 AGP 插件与 support 库下载 ——
       - name: Configure Gradle Aliyun Mirror
         run: |
           mkdir -p ~/.gradle
-          cat > ~/.gradle/init.gradle << EOF
+          cat > ~/.gradle/init.gradle <<'EOF'
           allprojects {
+              buildscript {
+                  repositories {
+                      maven { url 'https://maven.aliyun.com/repository/google' }
+                      maven { url 'https://maven.aliyun.com/repository/public' }
+                      maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+                      google()
+                      jcenter()
+                  }
+              }
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/public' }
-                  maven { url 'https://maven.aliyun.com/repository/jcenter' }
                   maven { url 'https://maven.aliyun.com/repository/google' }
+                  maven { url 'https://maven.aliyun.com/repository/jcenter' }
                   maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+                  google()
+                  jcenter()
               }
           }
           EOF
+          echo "=== init.gradle ==="
+          cat ~/.gradle/init.gradle
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./project/android/demo/gradlew
 
-      # —— 构建：限制并发，缓解 runner 7G 内存被 OOM 杀 ——
+      # —— 第六步：构建 APK ——
       - name: Build Debug APK
         run: |
           cd project/android/demo
-          ./gradlew assembleDebug --no-daemon -Dorg.gradle.workers.max=2
+          ./gradlew assembleDebug --no-daemon --stacktrace -Dorg.gradle.workers.max=2
 
-      # —— 对应博客产物路径：app/build/outputs/apk/debug ——
+      # —— 第七步：上传产物 ——
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
