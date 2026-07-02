@@ -37,7 +37,7 @@ jobs:
       # —— local.properties 配置 sdk.dir / ndk.dir ——
       - name: Generate local.properties
         run: |
-          cat > project/android/demo/local.properties <<'EOF'
+          cat > project/android/demo/local.properties <<EOF
           sdk.dir=${ANDROID_HOME}
           ndk.dir=${ANDROID_HOME}/ndk/${{ env.ANDROID_NDK_VERSION }}
           EOF
