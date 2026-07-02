@@ -1,4 +1,4 @@
-name: Build MNN Android APK
+name: Build MNN Android APK (Enhanced)
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ jobs:
       - name: Checkout MNN source code
         uses: actions/checkout@v4
 
-      # —— 第一步：先用 JDK 17，让 setup-android 的 sdkmanager 能跑 ——
+      # 1. 解决 sdkmanager 要求 JDK17 的问题
       - name: Set up JDK 17 (for sdkmanager)
         uses: actions/setup-java@v4
         with:
@@ -32,27 +32,61 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_ENV
           echo "ANDROID_NDK=$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_ENV
 
-      # —— 第二步：切回 JDK 11，给 MNN 的旧 Gradle 用 ——
+      # 2. 解决 Gradle 旧版本不兼容 JDK17 的问题
       - name: Set up JDK 11 (for Gradle build)
         uses: actions/setup-java@v4
         with:
           java-version: '11'
           distribution: 'temurin'
 
-      - name: Show Java version (sanity check)
-        run: java -version
-
       - name: Grant execute permission for gradlew
         run: chmod +x ./project/android/demo/gradlew
 
-      - name: Build Debug APK
+      # 3. 解决 GitHub runner 下载 Maven 依赖超时/网络阻断的问题
+      - name: Configure Gradle to use Aliyun Maven Mirror
+        run: |
+          mkdir -p ~/.gradle
+          cat <<EOF > ~/.gradle/init.gradle
+          allprojects {
+              repositories {
+                  def ALIYUN_REPOSITORY_URL = 'https://maven.aliyun.com/repository/public'
+                  def ALIYUN_JCENTER_URL = 'https://maven.aliyun.com/repository/jcenter'
+                  def ALIYUN_GOOGLE_URL = 'https://maven.aliyun.com/repository/google'
+                  def ALIYUN_GRADLE_PLUGIN_URL = 'https://maven.aliyun.com/repository/gradle-plugin'
+                  all { ArtifactRepository repo ->
+                      if(repo instanceof MavenArtifactRepository){
+                          def url = repo.url.toString()
+                          if (url.startsWith('https://repo1.maven.org/maven2') || url.startsWith('https://repo.maven.apache.org/maven2')) {
+                              project.logger.lifecycle "Repository ${repo.url} replaced by $ALIYUN_REPOSITORY_URL."
+                              remove repo
+                          }
+                          if (url.startsWith('https://jcenter.bintray.com/')) {
+                              project.logger.lifecycle "Repository ${repo.url} replaced by $ALIYUN_JCENTER_URL."
+                              remove repo
+                          }
+                          if (url.startsWith('https://dl.google.com/dl/android/maven2/')) {
+                              project.logger.lifecycle "Repository ${repo.url} replaced by $ALIYUN_GOOGLE_URL."
+                              remove repo
+                          }
+                          if (url.startsWith('https://plugins.gradle.org/m2/')) {
+                              project.logger.lifecycle "Repository ${repo.url} replaced by $ALIYUN_GRADLE_PLUGIN_URL."
+                              remove repo
+                          }
+                      }
+                  }
+                  maven { url ALIYUN_REPOSITORY_URL }
+                  maven { url ALIYUN_JCENTER_URL }
+                  maven { url ALIYUN_GOOGLE_URL }
+                  maven { url ALIYUN_GRADLE_PLUGIN_URL }
+              }
+          }
+          EOF
+
+      # 4. 解决 GitHub 免费 Runner 内存不足导致 C++ 编译崩溃 (Exit code 137)
+      - name: Build Debug APK with limited memory
         run: |
           cd project/android/demo
-          ./gradlew assembleDebug --no-daemon --stacktrace
-
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MNN-Android-APK
-          path: project/android/demo/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 7
+          # 限制 Gradle 守护进程内存，并降低 CMake 编译并发度
+          ./gradlew assembleDebug --no-daemon --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx2048m" \
+            -Dorg.gradle.workers.max=2
