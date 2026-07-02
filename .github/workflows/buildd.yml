@@ -36,12 +36,11 @@ jobs:
 
       # —— local.properties 配置 sdk.dir / ndk.dir ——
       - name: Generate local.properties
-        env:
-          SDK_DIR: /usr/local/lib/android/sdk
-          NDK_DIR: /usr/local/lib/android/sdk/ndk/${{ env.ANDROID_NDK_VERSION }}
         run: |
-          echo "sdk.dir=${SDK_DIR}" > project/android/demo/local.properties
-          echo "ndk.dir=${NDK_DIR}" >> project/android/demo/local.properties
+          cat > project/android/demo/local.properties <<EOF
+          sdk.dir=${ANDROID_HOME}
+          ndk.dir=${ANDROID_HOME}/ndk/${{ env.ANDROID_NDK_VERSION }}
+          EOF
           echo "=== local.properties ==="
           cat project/android/demo/local.properties
 
